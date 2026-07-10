@@ -12,7 +12,7 @@ Why Catan and not Go: Catan breaks every assumption that makes AlphaZero clean �
 
 Engine substrate: [Catanatron](https://github.com/bcollazo/catanatron) (open-source Catan engine, gym env, heuristic benchmark bots). The RL/search code is hand-written; the rules engine is not — the learning goal is the algorithms, not longest-road edge cases.
 
-- **Stage 0 — Substrate.** Install Catanatron, read its state/action model, benchmark its heuristic bots against each other. Deliverable: a harness that runs N games between any two agents and reports win rates.
+- **Stage 0 — Substrate.** ✅ (2026-07-10) Install Catanatron, read its state/action model, benchmark its heuristic bots against each other. Deliverable: a harness that runs N games between any two agents and reports win rates — `catan_rl/benchmark.py`. Ladder result: `value` ≫ `vp` ≈ `weighted` > `random`, and `value` beats `alphabeta` 58/42 at ~80× less compute — the bot ladder is a cliff, not a slope.
 - **Stage 1 — Pure search.** 1v1, no player trading. Hand-written MCTS (UCT, then expectimax-style chance nodes for dice) with random rollouts — no neural net. Target: beat Catanatron's weak/medium heuristics.
 - **Stage 2 — AlphaZero loop.** Add a policy+value network. Self-play → train policy head on MCTS visit distributions, value head on outcomes → stronger search. The credit-assignment sidestep, experienced firsthand.
 - **Stage 3 — Hidden information.** Dev cards and unknown hands: determinization (sample consistent worlds, search each) vs. belief-state features. The POMDP stage.
