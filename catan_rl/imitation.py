@@ -100,7 +100,7 @@ def evaluate_policy(net, encoder, opponent_cls, n_games, seed=0, turn_cap=400):
         game = Game(players, seed=seed + i)
         while game.winning_color() is None and game.state.num_turns < turn_cap:
             game.play_tick()
-        if game_winner(game) == my_color:
+        if game.winning_color() == my_color:
             wins += 1
     return wins / n_games
 

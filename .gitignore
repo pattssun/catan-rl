@@ -7,4 +7,8 @@ runs/
 checkpoints/
 *.ckpt
 *.pt
-runs/
+!examples/runs/
+dashboard/node_modules/
+dashboard/dist/
+.pytest_cache/
+dashboard/*.tsbuildinfo

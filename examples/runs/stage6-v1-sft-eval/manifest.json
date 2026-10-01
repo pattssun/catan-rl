@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "id": "stage6-v1-sft-eval",
+  "title": "stage6-v1-sft-eval",
+  "algorithm": "llm_evaluation",
+  "source": "measured",
+  "created_at": "2026-10-01T15:51:31.525730+00:00",
+  "updated_at": "2026-10-01T16:10:21.820380+00:00",
+  "status": "completed",
+  "config": {
+    "version": "stage6_v1",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "prompt_version": "catan_action_v2_ports",
+    "seed": 170000,
+    "source": "value versus weighted, alternating colors; 400 turns / 8000 actions",
+    "splits": {
+      "train": [
+        110000,
+        24
+      ],
+      "dev": [
+        120000,
+        8
+      ],
+      "test": [
+        130000,
+        16
+      ]
+    },
+    "states_per_game": {
+      "setup": 2,
+      "play": 6
+    },
+    "sampling": "uniform reservoir per phase, non-forced decisions, no prompt truncation",
+    "teacher": "2 determinized dev-card worlds x 100 MCTS simulations; random rollouts; horizon 120",
+    "teacher_limit": "Resource hands remain privileged; only hidden dev cards and deck are resampled.",
+    "coverage": "Every legal action visited in both worlds; menus above 100 actions excluded from dataset",
+    "reward": "2 * pooled root mean value - 1; invalid output -2",
+    "agreement": "any maximum-value action within 1e-8; invalid disagrees; forced excluded",
+    "sft_target": "smallest ID among tied maximum-value actions",
+    "max_prompt_tokens": 2048,
+    "max_new_tokens": 16,
+    "lora": {
+      "rank": 8,
+      "alpha": 16,
+      "dropout": 0,
+      "targets": [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj"
+      ]
+    },
+    "rounds": 200,
+    "prompts_per_round": 4,
+    "group": 4,
+    "updates_per_round": 2,
+    "hours_per_training_arm": 8,
+    "learning_rate": 1e-05,
+    "clip": 0.2,
+    "beta": 0.02,
+    "gradient_clip": 1.0,
+    "optimizer": "AdamW, weight_decay=0, eps=1e-8",
+    "sampling_temperature": 1.0,
+    "top_p": 1.0,
+    "top_k": 0,
+    "checkpoint": "last completed round; no selection on dev/test",
+    "control": "SFT from same initial weights, same sampled prompts and update count; lower token compute",
+    "dev_every": 25,
+    "checkpoint_every": 25,
+    "game_seed": 170000,
+    "evaluation_games": 20,
+    "game_turn_cap": 400,
+    "game_action_cap": 8000,
+    "evaluation_hours_per_arm": 4,
+    "game_decode": "greedy; invalid/overlength prompt uses seeded uniform legal fallback, logged",
+    "success": "test agreement gain >= .10 and observed actual win rate >= untuned; all evaluations complete",
+    "interval": "paired cluster bootstrap of differences, 10000 resamples seed 611; game/board is cluster",
+    "budget_stop": "finish current training round or evaluation board pair; incomplete evaluation is inconclusive",
+    "smoke": false,
+    "dataset_sha256": {
+      "train": "ff7e7ae5dad3c41b6f761f8c0ef3cc2ce0cd47081c063804cf120108ae5f115e",
+      "dev": "116fb5f017b020a45fdb3840fdd03a45d419d3a06c68ad65ba6046384cdb815f",
+      "test": "a1809ae6340d2540da86cf5532b8d3b21778a33d0e46282e2462f77ff75446d7"
+    },
+    "adapter_sha256": "2e926056ff6c1facd5eb1fe4bf7db16609f51daada20a82ec103a565513a1ed7",
+    "evaluation": "actual_outcome_v1",
+    "agent": "runs/stage6-v1-sft/round0200",
+    "opponent": "weighted",
+    "games": 20,
+    "turn_cap": 400,
+    "action_cap": 8000
+  },
+  "provenance": {
+    "git_revision": "f3f05b9bf3da1e5b1b2e4791c07466639f251948",
+    "dirty": true,
+    "source_sha256": "6aba656e90d8c3feb107e4ecde627fed7821f916a5e08b1e6c65fad06a8c77bc",
+    "python": "3.13.5",
+    "catanatron": "3.3.0",
+    "torch": "2.13.0"
+  },
+  "config_sha256": "7692ebc4425a7e2cfa7ca75cf308e08a98f814235ba972ad95180cd75b072f7b",
+  "public_bundle": {
+    "complete_trace_ids": [
+      "0000",
+      "0001"
+    ],
+    "selection": "First paired board; all other episodes retain outcome and action summaries. Model weights are not bundled."
+  }
+}

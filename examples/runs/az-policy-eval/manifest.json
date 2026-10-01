@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "az-policy-eval",
+  "title": "AlphaZero policy \u00b7 fresh evaluation",
+  "algorithm": "evaluation",
+  "source": "measured",
+  "created_at": "2026-09-30T22:17:40.793966+00:00",
+  "updated_at": "2026-09-30T22:17:42.598610+00:00",
+  "status": "completed",
+  "config": {
+    "agent": "policy:runs/az6/iter060.pt",
+    "opponent": "weighted",
+    "games": 4,
+    "seed": 10000,
+    "turn_cap": 400,
+    "action_cap": 8000,
+    "evaluation": "actual_outcome_v1",
+    "seating": "both_seats_per_board",
+    "randomness": "isolated_agent_decisions_v1",
+    "checkpoint_sha256": "d0dee9de3e33090784c567bb507304c4f683d988d3ac0b00185f6ae75fd9e24f"
+  },
+  "provenance": {
+    "git_revision": "f3f05b9bf3da1e5b1b2e4791c07466639f251948",
+    "dirty": true,
+    "source_sha256": "d947d248109e09ea0aff910e1447ffcd3a968797722fa8891b21dfcac6217c7b",
+    "python": "3.13.5",
+    "catanatron": "3.3.0",
+    "torch": "2.13.0"
+  },
+  "config_sha256": "48cb681eeda6a60c864d182478a49fb92e8e8f402dc60e459813790a4ffbf615"
+}

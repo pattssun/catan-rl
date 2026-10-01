@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "az6-legacy",
+  "title": "AlphaZero \u00b7 July training",
+  "algorithm": "alphazero",
+  "source": "legacy_log",
+  "created_at": "2026-09-30T22:09:55.721647+00:00",
+  "updated_at": "2026-09-30T22:09:55.811844+00:00",
+  "status": "completed",
+  "config": {
+    "evaluation": "legacy_vp_leader_at_cutoff",
+    "games_per_evaluation": null,
+    "historical_config": "not recorded",
+    "log_sha256": "96607b0e1ee7a26cc626c597f24828905229eecd443482be965e0fe74d60af3d"
+  },
+  "provenance": {
+    "git_revision": "f3f05b9bf3da1e5b1b2e4791c07466639f251948",
+    "dirty": true,
+    "source_sha256": "2a992321272990493938aee1a330a778d8a1f9064d564ae92733e0632b18ee92",
+    "python": "3.13.5",
+    "catanatron": "3.3.0",
+    "torch": "2.13.0"
+  },
+  "config_sha256": "b68749052e652531db34597680324ff5ebf3933f651ec3f14d8ef5598411f652",
+  "notes": "Imported historical metrics. Cutoff leads counted as wins; episode traces and evaluation sample counts were not saved."
+}

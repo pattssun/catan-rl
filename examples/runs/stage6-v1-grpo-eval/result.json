@@ -1,0 +1,28 @@
+{
+  "agreement": 0.671875,
+  "outcomes": [
+    "win",
+    "win",
+    "loss",
+    "loss",
+    "win",
+    "loss",
+    "loss",
+    "loss",
+    "loss",
+    "win",
+    "win",
+    "win",
+    "loss",
+    "win",
+    "loss",
+    "timeout",
+    "win",
+    "loss",
+    "win",
+    "win"
+  ],
+  "win_rate": 0.5,
+  "complete": true,
+  "smoke": false
+}

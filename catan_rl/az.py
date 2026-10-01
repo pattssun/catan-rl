@@ -30,6 +30,8 @@ from catanatron.state_functions import get_actual_victory_points
 
 from catan_rl.mcts import DICE_PAIRS, is_chance
 from catan_rl.net import Encoder, PolicyValueNet
+from catan_rl.randomness import isolated_random
+from catan_rl.telemetry import RunWriter
 
 
 def game_winner(game):
@@ -86,9 +88,14 @@ class AZMCTS:
         self.c_puct = c_puct
         self.rng = random.Random(seed)
         self.np_rng = np.random.default_rng(seed)
+        self.environment_rng = random.Random(seed)
 
     def search(self, game, num_simulations, root_noise=None):
         """Returns {action: visit_count} at the root."""
+        with isolated_random(self.environment_rng):
+            return self._search(game, num_simulations, root_noise)
+
+    def _search(self, game, num_simulations, root_noise=None):
         root = AZNode(game.copy(), None)
         self._evaluate(root)
         if root_noise is not None:
@@ -196,7 +203,8 @@ class AZAgent(Player):
 
 
 def self_play_game(net, encoder, num_simulations, seed, temp_moves=30,
-                   noise=(0.3, 0.25), turn_cap=400, opponents=None):
+                   noise=(0.3, 0.25), turn_cap=400, opponents=None, diagnostics=None,
+                   action_cap=8000):
     """Play one self-play game; return (samples, winner, num_turns).
 
     Samples are (features, visit_dist, z) with z from that state's
@@ -211,7 +219,10 @@ def self_play_game(net, encoder, num_simulations, seed, temp_moves=30,
     mcts = AZMCTS(net, encoder, seed=seed)
     records = []
     decision = 0
-    while game.winning_color() is None and game.state.num_turns < turn_cap:
+    ticks = 0
+    action_counts = {}
+    while game.winning_color() is None and game.state.num_turns < turn_cap and ticks < action_cap:
+        ticks += 1
         actions = game.playable_actions
         if len(actions) == 1:
             game.execute(actions[0])
@@ -233,6 +244,8 @@ def self_play_game(net, encoder, num_simulations, seed, temp_moves=30,
             action = rng.choices([a for a, _ in items], weights)[0]
         else:
             action = max(visits, key=visits.get)
+        kind = action.action_type.value
+        action_counts[kind] = action_counts.get(kind, 0) + 1
         game.execute(action)
         decision += 1
 
@@ -251,12 +264,16 @@ def self_play_game(net, encoder, num_simulations, seed, temp_moves=30,
         return z
 
     samples = [(f, pi, z_for(color)) for f, pi, color in records]
+    if diagnostics is not None:
+        diagnostics.update(actual_winner=game.winning_color().value if game.winning_color() else None,
+                           cutoff=game.winning_color() is None, actions=ticks,
+                           action_counts=action_counts)
     return samples, winner, game.state.num_turns
 
 
-def train_steps(net, buffer, steps, batch_size=256, lr=1e-3, device="cpu"):
+def train_steps(net, buffer, steps, batch_size=256, lr=1e-3, device="cpu", optimizer=None):
     net.to(device).train()
-    opt = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=1e-4)
+    opt = optimizer or torch.optim.Adam(net.parameters(), lr=lr, weight_decay=1e-4)
     losses = []
     for _ in range(steps):
         batch = random.sample(buffer, min(batch_size, len(buffer)))
@@ -267,6 +284,8 @@ def train_steps(net, buffer, steps, batch_size=256, lr=1e-3, device="cpu"):
         policy_loss = -(pi * torch.log_softmax(logits, dim=1)).sum(1).mean()
         value_loss = torch.nn.functional.mse_loss(v, z)
         loss = policy_loss + value_loss
+        if not torch.isfinite(loss):
+            raise FloatingPointError("Non-finite AlphaZero loss")
         opt.zero_grad()
         loss.backward()
         opt.step()
@@ -277,9 +296,7 @@ def train_steps(net, buffer, steps, batch_size=256, lr=1e-3, device="cpu"):
 
 def evaluate(net, encoder, opponent_cls, n_games, num_simulations, seed=0,
              turn_cap=400):
-    """AZ agent vs a table of opponent_cls, rotating the AZ seat.
-    Games hitting turn_cap are scored by VP leader — bounds eval time
-    against passive early nets and still measures who is ahead."""
+    """Actual wins only. Cutoff leads are not wins."""
     wins = 0
     colors = list(encoder.colors)
     for i in range(n_games):
@@ -289,20 +306,25 @@ def evaluate(net, encoder, opponent_cls, n_games, num_simulations, seed=0,
         game = Game(players, seed=seed + i)
         while game.winning_color() is None and game.state.num_turns < turn_cap:
             game.play_tick()
-        if game_winner(game) == az_color:
+        if game.winning_color() == az_color:
             wins += 1
     return wins / n_games
 
 
-def save_checkpoint(net, encoder, path):
+def save_checkpoint(net, encoder, path, training=None):
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
+    payload = {
         "state_dict": net.state_dict(),
         "num_features": encoder.num_features,
         "num_actions": encoder.num_actions,
         "num_values": net.num_values,
         "colors": [c.value for c in encoder.colors],
-    }, path)
+    }
+    if training is not None:
+        payload["training"] = training
+    temporary = path.with_suffix(".tmp")
+    torch.save(payload, temporary)
+    temporary.replace(path)
 
 
 def load_checkpoint(path):
@@ -333,12 +355,30 @@ def main():
                              "fills each non-net seat from the pool with prob 0.5")
     parser.add_argument("--out", type=str, default="runs/az")
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--hours", type=float, default=8)
+    parser.add_argument("--eval-every", type=int, default=5)
+    parser.add_argument("--curriculum", default=None, help="comma-separated turn caps, equal iteration stages")
+    parser.add_argument("--final-eval-games", type=int, default=0)
     args = parser.parse_args()
+    if min(args.iterations, args.games, args.sims, args.train_steps, args.eval_every, args.eval_sims, args.buffer, args.eval_games) <= 0 or args.hours <= 0:
+        parser.error("Training budgets must be positive")
+    if args.players == 2 and args.eval_games % 2:
+        parser.error("Development evaluation requires an even game count")
+    if args.final_eval_games < 0 or (args.final_eval_games and (args.players != 2 or args.final_eval_games % 2)):
+        parser.error("Final paired evaluation requires two players and an even game count")
+    caps = [int(c) for c in args.curriculum.split(",")] if args.curriculum else [args.turn_cap]
+    if min(caps) <= 0:
+        parser.error("Turn caps must be positive")
+    out = Path(args.out)
+    if out.exists() and (list(out.glob("*.pt")) or (out / "manifest.json").exists()):
+        parser.error("Choose a fresh --out directory; existing runs are never overwritten")
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     if args.resume:
         net, encoder = load_checkpoint(Path(args.resume))
+        if len(encoder.colors) != args.players:
+            parser.error("Checkpoint player count does not match --players")
         print(f"resumed from {args.resume}")
     else:
         encoder = Encoder([Color.RED, Color.BLUE, Color.WHITE, Color.ORANGE][:args.players])
@@ -351,41 +391,123 @@ def main():
     pool_specs = args.pool.split(",") if args.pool else []
     pool_rng = random.Random(args.seed + 1)
 
-    for it in range(1, args.iterations + 1):
-        t0 = time.time()
-        turns, wins = [], {c: 0 for c in encoder.colors}
-        for g in range(args.games):
-            opponents = {}
-            if pool_specs:
-                from catan_rl.benchmark import resolve_factory
-                # keep >=1 net seat; every other seat drawn from pool half the time
-                for color in list(encoder.colors)[1:]:
-                    if pool_rng.random() < 0.5:
-                        spec = pool_rng.choice(pool_specs)
-                        opponents[color] = resolve_factory(spec)(color)
-            samples, winner, num_turns = self_play_game(
-                net, encoder, args.sims, seed=args.seed + it * 10_000 + g,
-                temp_moves=args.temp_moves, turn_cap=args.turn_cap,
-                opponents=opponents)
-            buffer.extend(samples)
-            turns.append(num_turns)
-            if winner is not None:
-                wins[winner] += 1
-        sp_time = time.time() - t0
-
-        ploss, vloss = train_steps(net, buffer, args.train_steps)
-
-        wr_weighted = evaluate(net, encoder, WeightedRandomPlayer,
-                               args.eval_games, args.eval_sims, seed=it * 777)
-        wr_value = evaluate(net, encoder, ValueFunctionPlayer,
-                            args.eval_games, args.eval_sims, seed=it * 777)
-
-        save_checkpoint(net, encoder, out / f"iter{it:03d}.pt")
-        print(f"iter {it:2d} | selfplay {sp_time:5.0f}s avg_turns {np.mean(turns):5.0f} "
-              f"{dict((c.value, w) for c, w in wins.items())} | buffer {len(buffer):6d} "
-              f"| ploss {ploss:.3f} vloss {vloss:.3f} "
-              f"| vs weighted {wr_weighted:.0%} vs value {wr_value:.0%} "
-              f"| total {time.time() - t0:.0f}s", flush=True)
+    optimizer = torch.optim.Adam(net.parameters(), lr=1e-3, weight_decay=1e-4)
+    start_iteration, elapsed_before = 0, 0.0
+    resume_kind = "new"
+    initial_checkpoint = args.resume
+    if args.resume:
+        checkpoint = torch.load(args.resume, weights_only=False)
+        state = checkpoint.get("training")
+        resume_kind = "full_state" if state else "weights_only"
+        if state:
+            initial_checkpoint = state.get("initial_checkpoint", state["config"].get("resume"))
+            for key in ("seed", "games", "sims", "train_steps", "buffer", "curriculum", "iterations", "turn_cap", "temp_moves", "pool", "hours", "eval_games", "eval_sims", "eval_every", "final_eval_games"):
+                if state["config"].get(key) != vars(args).get(key):
+                    parser.error(f"Full resume must preserve {key}")
+            buffer.extend(state["replay"])
+            optimizer.load_state_dict(state["optimizer"])
+            torch.set_rng_state(state["torch_rng"])
+            random.setstate(state["python_rng"])
+            pool_rng.setstate(state["pool_rng"])
+            start_iteration = state["iteration"]
+            elapsed_before = state["elapsed_seconds"]
+    config = {**vars(args), "resume_kind": resume_kind, "evaluation": "actual_outcome_v1",
+              "training_reward": "vp_leader_at_curriculum_cap", "optimizer": "persistent_adam",
+              "caps": caps, "interval_games": args.eval_games}
+    if args.resume:
+        import hashlib
+        config["initial_checkpoint_sha256"] = hashlib.sha256(Path(args.resume).read_bytes()).hexdigest()
+    writer = RunWriter(out, "alphazero", config, title=out.name)
+    started = time.monotonic()
+    deadline = started + max(0, args.hours * 3600 - elapsed_before)
+    final_path = None
+    completed_iteration = start_iteration
+    try:
+        for it in range(start_iteration + 1, args.iterations + 1):
+            if time.monotonic() >= deadline:
+                break
+            t0 = time.monotonic()
+            cap = caps[min((it - 1) * len(caps) // args.iterations, len(caps) - 1)]
+            turns, diagnostics = [], []
+            for g in range(args.games):
+                if time.monotonic() >= deadline:
+                    break
+                opponents = {}
+                if pool_specs:
+                    from catan_rl.benchmark import resolve_factory
+                    for color in list(encoder.colors)[1:]:
+                        if pool_rng.random() < .5:
+                            opponents[color] = resolve_factory(pool_rng.choice(pool_specs), seed=args.seed + it * 10000 + g)(color)
+                detail = {}
+                samples, winner, num_turns = self_play_game(
+                    net, encoder, args.sims, seed=args.seed + it * 10000 + g,
+                    temp_moves=args.temp_moves, turn_cap=cap,
+                    opponents=opponents, diagnostics=detail)
+                buffer.extend(samples)
+                turns.append(num_turns)
+                diagnostics.append(detail)
+            if not turns:
+                break
+            if not buffer:
+                raise RuntimeError("No non-forced decisions collected")
+            sp_time = time.monotonic() - t0
+            ploss, vloss = train_steps(net, buffer, args.train_steps, optimizer=optimizer)
+            final_path = out / f"iter{it:03d}.pt"
+            save_checkpoint(net, encoder, final_path)
+            values = {"step": it, "policy_loss": ploss, "value_loss": vloss,
+                      "selfplay_seconds": sp_time, "avg_turns": float(np.mean(turns)),
+                      "turn_cap": cap, "buffer_size": len(buffer), "selfplay_games": len(turns),
+                      "selfplay_timeout_rate": sum(d["cutoff"] for d in diagnostics) / len(diagnostics)}
+            if it % args.eval_every == 0 or it == args.iterations:
+                if len(encoder.colors) == 2:
+                    from catan_rl.evaluation import play_episode
+                    outcomes = []
+                    for j in range(args.eval_games):
+                        if j % 2 == 0 and time.monotonic() >= deadline:
+                            break
+                        episode = play_episode(f"az:{final_path}:{args.eval_sims}", "weighted",
+                            80000 + j // 2, j % 2, 400, 8000, f"{it:03d}-{j:04d}")
+                        writer.episode(episode)
+                        outcomes.append(episode["outcome"])
+                    if outcomes:
+                        values.update(win_rate=outcomes.count("win") / len(outcomes),
+                                      timeout_rate=outcomes.count("timeout") / len(outcomes),
+                                      games=len(outcomes), evaluation_step=it,
+                                      evaluation_complete=len(outcomes) == args.eval_games)
+                else:
+                    values["win_rate"] = evaluate(net, encoder, WeightedRandomPlayer,
+                                                  args.eval_games, args.eval_sims, seed=80000)
+            values["iteration_seconds"] = time.monotonic() - t0
+            values["elapsed_seconds"] = elapsed_before + time.monotonic() - started
+            writer.event("metrics", **values)
+            save_checkpoint(net, encoder, out / "resume.pt", training={
+                "iteration": it, "optimizer": optimizer.state_dict(), "replay": list(buffer),
+                "python_rng": random.getstate(), "torch_rng": torch.get_rng_state(),
+                "pool_rng": pool_rng.getstate(), "elapsed_seconds": values["elapsed_seconds"],
+                "initial_checkpoint": initial_checkpoint,
+                "config": vars(args)})
+            completed_iteration = it
+            print(f"iter {it}: loss {ploss:.3f}/{vloss:.3f}, cap {cap}, "
+                  f"selfplay timeouts {values['selfplay_timeout_rate']:.0%}, "
+                  f"actual win rate {values.get('win_rate', 'not evaluated')}", flush=True)
+        if final_path is None:
+            writer.finish("budget_exhausted", notes="No new iteration completed")
+            return
+        writer.finish("completed" if completed_iteration == args.iterations else "budget_exhausted",
+                      final_checkpoint=final_path.name)
+    except BaseException as exc:
+        writer.finish("failed", error=f"{type(exc).__name__}: {exc}")
+        raise
+    if args.final_eval_games:
+        from catan_rl.evaluation import evaluate as evaluate_run
+        evaluations = [("search", f"az:{final_path}:{args.eval_sims}"), ("policy", f"policy:{final_path}")]
+        if initial_checkpoint:
+            evaluations += [("starting-search", f"az:{initial_checkpoint}:{args.eval_sims}"),
+                            ("starting-policy", f"policy:{initial_checkpoint}")]
+        for name, agent in evaluations:
+            evaluate_run(agent, "weighted", args.final_eval_games,
+                         out.parent / f"{out.name}-final-{name}", seed=90000,
+                         title=f"{out.name} · final {name}")
 
 
 if __name__ == "__main__":

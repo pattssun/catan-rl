@@ -15,6 +15,7 @@ from catanatron.game import TURNS_LIMIT, Game
 from catanatron.models.enums import ActionRecord, ActionType
 from catanatron.models.player import Player
 from catanatron.state_functions import get_actual_victory_points
+from catan_rl.randomness import isolated_random
 
 DICE_PAIRS = [(a, b) for a in range(1, 7) for b in range(1, 7)]
 
@@ -68,6 +69,7 @@ class MCTS:
         self.rollout = rollout
         self.horizon = horizon
         self.rng = random.Random(seed)
+        self.environment_rng = random.Random(seed)
 
     def search(self, game, num_simulations):
         visits = self.search_visits(game, num_simulations)
@@ -75,6 +77,14 @@ class MCTS:
 
     def search_visits(self, game, num_simulations):
         """Returns {action: visit_count} at the root."""
+        return {action: stats["visits"] for action, stats in
+                self.search_statistics(game, num_simulations).items()}
+
+    def search_statistics(self, game, num_simulations):
+        with isolated_random(self.environment_rng):
+            return self._search_statistics(game, num_simulations)
+
+    def _search_statistics(self, game, num_simulations):
         root = Node(game.copy(), None, self.rng)
         for _ in range(num_simulations):
             path = [root]
@@ -95,7 +105,8 @@ class MCTS:
                     n.W += 1.0 if winner == n.mover else 0.5 if winner is None else 0.0
 
         return {
-            action: sum(c.N for c in bucket.values())
+            action: {"visits": sum(c.N for c in bucket.values()),
+                     "value": sum(c.W for c in bucket.values()) / sum(c.N for c in bucket.values())}
             for action, bucket in root.children.items()
         }
 

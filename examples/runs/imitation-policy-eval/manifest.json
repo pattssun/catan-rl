@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "imitation-policy-eval",
+  "title": "Winner imitation \u00b7 fresh evaluation",
+  "algorithm": "evaluation",
+  "source": "measured",
+  "created_at": "2026-09-30T22:17:41.869505+00:00",
+  "updated_at": "2026-09-30T22:17:43.108395+00:00",
+  "status": "completed",
+  "config": {
+    "agent": "policy:runs/imitation/iter015.pt",
+    "opponent": "weighted",
+    "games": 4,
+    "seed": 10000,
+    "turn_cap": 400,
+    "action_cap": 8000,
+    "evaluation": "actual_outcome_v1",
+    "seating": "both_seats_per_board",
+    "randomness": "isolated_agent_decisions_v1",
+    "checkpoint_sha256": "c640a9580c336719c6931765b0530e24507cd0ce208b3d75b20a7fd43acc599b"
+  },
+  "provenance": {
+    "git_revision": "f3f05b9bf3da1e5b1b2e4791c07466639f251948",
+    "dirty": true,
+    "source_sha256": "d947d248109e09ea0aff910e1447ffcd3a968797722fa8891b21dfcac6217c7b",
+    "python": "3.13.5",
+    "catanatron": "3.3.0",
+    "torch": "2.13.0"
+  },
+  "config_sha256": "b1588838ae0d80fb20ab0ee61793c5f4006a026276320a9826c924bd4500b9cb"
+}

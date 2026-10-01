@@ -1,6 +1,6 @@
 # catan-rl — orientation for Claude Code sessions
 
-Learning project: train a Catan AI to deeply understand RL / self-play / tree search. Modeled on [Eric Jang's AlphaGo-from-scratch rebuild](https://www.dwarkesh.com/p/eric-jang) (the conceptual backbone: MCTS/PUCT mechanics, credit-assignment sidestep, hidden-information framing). Second inspiration: [Edward Zhou's Catan RL bot](https://www.edwardzhou.com/projects/catan-rl-bot).
+Learning project: train a Catan AI to deeply understand RL / self-play / tree search. Modeled on [Eric Jang's AlphaGo-from-scratch rebuild](https://www.dwarkesh.com/p/eric-jang) (the conceptual backbone: MCTS/PUCT mechanics, credit-assignment sidestep, hidden-information framing).
 
 ## Locked decisions (2026-07-10)
 

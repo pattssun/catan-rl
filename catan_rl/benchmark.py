@@ -24,7 +24,7 @@ PLAYER_FACTORIES = {
 }
 
 
-def resolve_factory(spec):
+def resolve_factory(spec, seed=None):
     """'mcts:200:weighted:150' -> factory. Parts: sims, rollout, horizon."""
     name, *args = spec.split(":")
     if name == "mcts":
@@ -32,7 +32,7 @@ def resolve_factory(spec):
         rollout = args[1] if len(args) > 1 else "random"
         horizon = int(args[2]) if len(args) > 2 else None
         return lambda color: MCTSAgent(color, num_simulations=sims,
-                                       rollout=rollout, horizon=horizon)
+                                       rollout=rollout, horizon=horizon, seed=seed)
     if name == "dmcts":  # dmcts:sims:worlds[:rollout[:horizon]]
         from catan_rl.determinize import DeterminizedMCTSAgent
         sims = int(args[0]) if len(args) > 0 else 100
@@ -41,12 +41,12 @@ def resolve_factory(spec):
         horizon = int(args[3]) if len(args) > 3 else None
         return lambda color: DeterminizedMCTSAgent(
             color, num_simulations=sims, worlds=worlds,
-            rollout=rollout, horizon=horizon)
+            rollout=rollout, horizon=horizon, seed=seed)
     if name == "az":  # az:runs/az/iter005.pt:60
         from catan_rl.az import AZAgent, load_checkpoint
         net, encoder = load_checkpoint(args[0])
         sims = int(args[1]) if len(args) > 1 else 60
-        return lambda color: AZAgent(color, net, encoder, num_simulations=sims)
+        return lambda color: AZAgent(color, net, encoder, num_simulations=sims, seed=seed)
     return PLAYER_FACTORIES[name]
 
 COLORS = [Color.RED, Color.BLUE, Color.WHITE, Color.ORANGE]
