@@ -1,0 +1,12 @@
+{
+  "command": [
+    "replay",
+    "--state",
+    "/Users/patricksun/GitHub/catan-rl/runs/terminal-return-v1/states/01.json",
+    "--expected",
+    "/Users/patricksun/GitHub/catan-rl/runs/terminal-return-v1/states/01.expected.json"
+  ],
+  "seconds": 1.2150898749823682,
+  "returncode": 0,
+  "stderr": ""
+}

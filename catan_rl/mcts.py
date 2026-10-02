@@ -10,6 +10,7 @@ domain evaluation; the engine supplies only transitions and legality.
 
 import math
 import random
+from dataclasses import dataclass
 
 from catanatron.game import TURNS_LIMIT, Game
 from catanatron.models.enums import ActionRecord, ActionType
@@ -18,6 +19,18 @@ from catanatron.state_functions import get_actual_victory_points
 from catan_rl.randomness import isolated_random
 
 DICE_PAIRS = [(a, b) for a in range(1, 7) for b in range(1, 7)]
+
+
+@dataclass(frozen=True)
+class RolloutResult:
+    winner: object
+    actions: int
+    cutoff: bool
+
+
+def backed_up_value(result, mover, steps_after_action=0, discount=1.0):
+    sign = 0 if result.winner is None else 1 if result.winner == mover else -1
+    return (1 + sign * discount ** (steps_after_action + result.actions)) / 2
 
 
 def is_chance(action):
@@ -64,12 +77,19 @@ class Node:
 
 
 class MCTS:
-    def __init__(self, c=math.sqrt(2), rollout="random", horizon=None, seed=None):
+    def __init__(self, c=math.sqrt(2), rollout="random", horizon=None, seed=None,
+                 terminal_returns=False, discount=1.0, rollout_action_cap=None):
+        if not 0 < discount <= 1 or (rollout_action_cap is not None and rollout_action_cap < 1):
+            raise ValueError("Invalid discount or rollout action cap")
         self.c = c
         self.rollout = rollout
         self.horizon = horizon
         self.rng = random.Random(seed)
         self.environment_rng = random.Random(seed)
+        self.terminal_returns = terminal_returns
+        self.discount = discount
+        self.rollout_action_cap = rollout_action_cap
+        self.rollout_counts = {"total": 0, "cutoff": 0, "actions": 0}
 
     def search(self, game, num_simulations):
         visits = self.search_visits(game, num_simulations)
@@ -98,11 +118,14 @@ class MCTS:
                 node = self._step(node, node.untried.pop())
                 path.append(node)
 
-            winner = self._rollout(node)
-            for n in path:
+            result = self._rollout(node)
+            self.rollout_counts["total"] += 1
+            self.rollout_counts["cutoff"] += int(result.cutoff)
+            self.rollout_counts["actions"] += result.actions
+            for index, n in enumerate(path):
                 n.N += 1
                 if n.mover is not None:
-                    n.W += 1.0 if winner == n.mover else 0.5 if winner is None else 0.0
+                    n.W += backed_up_value(result, n.mover, len(path) - index - 1, self.discount)
 
         return {
             action: {"visits": sum(c.N for c in bucket.values()),
@@ -155,15 +178,19 @@ class MCTS:
     def _rollout(self, node):
         game = node.game
         if node.is_terminal:
-            return game.winning_color()
+            return RolloutResult(game.winning_color(), 0, game.winning_color() is None)
         game = game.copy()
         end = TURNS_LIMIT
         if self.horizon is not None:
             end = min(end, game.state.num_turns + self.horizon)
-        while game.winning_color() is None and game.state.num_turns < end:
+        actions = 0
+        while (game.winning_color() is None and game.state.num_turns < end
+               and (self.rollout_action_cap is None or actions < self.rollout_action_cap)):
             game.execute(self._rollout_action(game), validate_action=False)
+            actions += 1
         winner = game.winning_color()
-        if winner is None:  # horizon/turn-limit cutoff: most VPs wins, tie = draw
+        cutoff = winner is None
+        if cutoff and not self.terminal_returns:
             vps = {
                 color: get_actual_victory_points(game.state, color)
                 for color in game.state.colors
@@ -171,7 +198,7 @@ class MCTS:
             top = max(vps.values())
             leaders = [color for color, vp in vps.items() if vp == top]
             winner = leaders[0] if len(leaders) == 1 else None
-        return winner
+        return RolloutResult(winner, actions, cutoff)
 
     def _rollout_action(self, game):
         actions = game.playable_actions

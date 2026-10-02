@@ -43,14 +43,14 @@ The audit does **not recommend more training** with the current labels:
 - All actions tie in 77/192 training states. The SFT tie rule targets END_TURN in 65/88 states where it is available. That is a possible contributor to passing, not a proven cause.
 - Of 24 fixed reliability-panel states, 16 matched the saved prompts and legal menus; eight did not. Only seven of those 16 passed the three-search repeatability check. The full-panel estimate remains incomplete. Full hidden states were not saved, so a matching prompt cannot verify exact hidden-state recovery.
 
-The [report](examples/runs/reward-audit-v1/audit.json) retains every audited state and attempted panel unit. The dashboard shows controls, quality checks, boards, and repeated action values ([preview](examples/reward-audit.png)). Thresholds are in the [plan](PLAN.md); this is a retrospective audit of an already observed failure. The panel attempt took 84 seconds on CPU. No new training updates were made.
+The [report](examples/runs/reward-audit-v1/audit.json) retains every audited state and attempted panel unit. The dashboard shows controls, quality checks, boards, and repeated action values ([preview](examples/reward-audit.png)). Thresholds are recorded in the report and archived audit protocol; this is a retrospective audit of an already observed failure. The panel attempt took 84 seconds on CPU. No new training updates were made.
 
-Next: preserve fully replayable states and diagnose action-order sensitivity before changing the reward. Game seeds alone were insufficient in this audit. Catanatron generates some action menus from sets; their role in the failed replays has not been isolated. The [learning exercises](LEARNING.md) walk through the implementation and these findings.
+A trade-state probe reproduced different raw legal-menu orders across three Python hash seeds. Canonical ordering removes that variation. This identifies a replay hazard, without proving the cause of every old mismatch. The [learning exercises](LEARNING.md) walk through the algorithms and findings.
 
 <details>
 <summary>Reproduce the audit</summary>
 
-The [318 KB input archive](examples/reward-audit-inputs.zip) contains the original label files, evaluation predictions and manifests, the audit's source snapshot, and the interrupted first attempt. That attempt hit a reporting bug on missing evidence; the corrected attempt kept the same cohort and thresholds. Neither attempt changed the original experiment.
+The [input archive](examples/reward-audit-inputs.zip) contains the original label files, evaluation predictions and manifests, the audit's source snapshot, and the interrupted first attempt. That attempt hit a reporting bug on missing evidence; the corrected attempt kept the same cohort and thresholds. Neither attempt changed the original experiment.
 
 ```bash
 uv run python -m zipfile -e examples/reward-audit-inputs.zip runs/audit-inputs
@@ -67,6 +67,43 @@ uv run --extra llm python -c 'from transformers import AutoTokenizer; from catan
 ```
 
 Exact replay and repeat-search outcomes may differ across processes because the old run did not freeze every source of environment nondeterminism. A replay mismatch is recorded and skipped, never replaced. The archive's source snapshot lets you inspect what produced the reported attempt; it does not recover missing full game states.
+
+</details>
+
+## Replay and reward comparison
+
+The [fixed comparison](PLAN.md) stopped before either reward arm ran. All 24 states failed its fingerprint check in a 79-second attempt. The bug was in the checker: it treated Python attribute assignment order as game state, while the engine's `copy()` changes that order.
+
+The follow-up [diagnosis](examples/runs/terminal-return-v1/diagnosis.json) checked every state in three processes. All 72 checks had identical fields and matched the saved 100-action trajectories after normalizing attribute order. The serializer now sorts attribute names while preserving order within game dictionaries. New tests cover live collection as well as copied fixtures.
+
+The [original report](examples/runs/terminal-return-v1/comparison.json) remains incomplete. There are no reward-comparison results or new training updates. The dashboard shows the failed checks, boards, and diagnosis ([preview](examples/replay-comparison.png)). The next experiment would retry the same reward protocol after a separate registration; this attempt was not extended.
+
+<details>
+<summary>Reproduce the replay failure and diagnosis</summary>
+
+The [input archive](examples/terminal-return-inputs.zip) contains all 24 complete states, saved future traces, manifests, frozen code, and the original report. Aggregate checks need no search or model weights:
+
+```bash
+uv run python -m zipfile -e examples/terminal-return-inputs.zip runs/terminal-inputs
+uv run python -m catan_rl.reward_compare summarize --out runs/terminal-inputs/terminal-return-v1
+uv run python -m catan_rl.reward_compare diagnose --out runs/terminal-inputs/terminal-return-v1
+```
+
+The diagnosis uses the frozen serializer and runs only the saved continuation policy. Its 72 checks took 36 seconds locally; it runs no MCTS searches. Exact replay requires the recorded Python 3.13.5 and engine/dependency versions. Original snapshots use schema v1; current snapshots use v2. Old snapshots must be read with their frozen code.
+
+This command reproduces one original failed check and exits 2:
+
+```bash
+(cd runs/terminal-inputs/terminal-return-v1/source && \
+  ../../../../.venv/bin/python -m catan_rl.replay ../states/00.json \
+  --check --expected ../states/00.expected.json)
+```
+
+Test the corrected serializer and reward calculation with:
+
+```bash
+uv run pytest tests/test_replay.py tests/test_terminal_returns.py tests/test_reward_compare.py -q
+```
 
 </details>
 

@@ -444,6 +444,105 @@ function RewardAudit({ run }: { run: Run }) {
   </>;
 }
 
+type ComparisonRepeat = { seed: number; values: number[]; visits: number[] };
+type ComparisonSummary = { nonflat: boolean; repeatable: boolean; value_spreads: number[]; tied_maxima: number[]; cutoff_fraction: number };
+type ComparisonUnit = {
+  index: number; seed: number; phase: string; tick?: number; complete: boolean; error?: string;
+  state?: State; board?: Board; actions?: string[]; replay?: { passed: boolean; steps: number };
+  arms?: Record<string, ComparisonRepeat[]>; summaries?: Record<string, ComparisonSummary>;
+};
+type Comparison = {
+  complete: boolean; status: string; recommend_training_design: boolean; seconds: number; note: string;
+  arms: Record<string, { measured: number; denominator: number; nonflat: number; repeatable: number }>;
+  states: ComparisonUnit[];
+  diagnosis?: { note: string; cases: { processes: { same_fields: boolean; copy_matches: boolean }[] }[] };
+};
+
+function semanticAction(serialized: string) {
+  const action = JSON.parse(serialized).items;
+  const plain = (v: unknown): unknown => {
+    if (v && typeof v === "object") {
+      const value = v as { enum?: string; value?: unknown; tuple?: unknown[]; list?: unknown[] };
+      if (value.enum) return value.value;
+      if (value.tuple) return value.tuple.map(plain);
+      if (value.list) return value.list.map(plain);
+    }
+    return v;
+  };
+  return `${titleCase(action[1].value)} ${action[2] === null ? "" : JSON.stringify(plain(action[2]))}`;
+}
+
+function RewardComparison({ run }: { run: Run }) {
+  const [report, setReport] = useState<Comparison | null>(null);
+  const [error, setError] = useState("");
+  const [index, setIndex] = useState(0);
+  const [filter, setFilter] = useState("all");
+  useEffect(() => { setReport(null); setError(""); setIndex(0); setFilter("all"); }, [run.id]);
+  useEffect(() => {
+    let active = true;
+    api<Comparison>(`/api/runs/${run.id}/comparison`).then((data) => {
+      if (active) { setReport(data); setError(""); }
+    }).catch((e) => { if (active) { setReport(null); setError(String(e)); } });
+    return () => { active = false; };
+  }, [run]);
+  if (error) return <div role="alert" className="notice danger">Reward comparison unavailable. No result can be verified. {error}</div>;
+  if (!report) return <div className="empty-chart">Loading reward comparison...</div>;
+  const choices = report.states.filter((s) => filter === "all" || (filter === "missing" ? !s.complete : !s.summaries?.candidate.repeatable));
+  const selected = choices.find((s) => s.index === index) ?? choices[0];
+  return <>
+    <div className={`notice ${report.recommend_training_design ? "" : "danger"}`}>
+      <strong>{report.recommend_training_design ? "Reward checks passed." : report.complete ? "Reward checks failed." : "Reward comparison is incomplete."}</strong>
+      <span>{report.recommend_training_design ? "A separate training experiment can now be designed." : "Further training is not recommended from these results."} {report.note}</span>
+    </div>
+    {report.diagnosis && <div className="notice">
+      <strong>The replay checker compared object attribute order as game state.</strong>
+      <span>A follow-up using the frozen code found identical fields and matching saved trajectories in {report.diagnosis.cases.flatMap((c) => c.processes).filter((p) => p.same_fields && p.copy_matches).length}/{report.diagnosis.cases.flatMap((c) => c.processes).length} process checks after an engine copy normalized attribute order. {report.diagnosis.note}</span>
+    </div>}
+    <div className="stats">
+      {Object.entries(report.arms).map(([arm, summary]) => <React.Fragment key={arm}>
+        <Stat label={`${arm.toUpperCase()} NON-FLAT STATES`} value={summary.measured ? `${summary.nonflat}/${summary.denominator}` : "Not measured"} detail={`${summary.measured}/${summary.denominator} measured; non-flat in all three repeats`} />
+        <Stat label={`${arm.toUpperCase()} REPEATABLE STATES`} value={summary.measured ? `${summary.repeatable}/${summary.denominator}` : "Not measured"} detail="Non-flat with a shared best action across repeats" />
+      </React.Fragment>)}
+    </div>
+    <section className="panel">
+      <PanelTitle label="What changed in the reward?" caption="24 fixed states from 12 source games; three searches per objective" />
+      <p>Control: the VP leader wins at a nonterminal cutoff. Candidate: only actual wins count, discounted by 0.995 per subsequent action. Both use the same search budget and canonical action order.</p>
+      <p>The fixed candidate thresholds are at least 18/24 non-flat states and 20/24 repeatable states. Every state, replay check, and search must finish. Missing states remain in the denominator.</p>
+      <p className="footnote">Values range from 0 to 1; a neutral outcome is 0.5. Resource hands are privileged teacher information. This is a diagnostic comparison, not the original teacher or a test of playing strength. Runtime: {num(report.seconds, 1)} seconds.</p>
+    </section>
+    <section className="panel">
+      <PanelTitle label="Compare action values" caption="The same saved state under both objectives" />
+      <div className="audit-controls">
+        <label className="audit-control">Show <select value={filter} onChange={(e) => { setFilter(e.target.value); setIndex(0); }}>
+          <option value="all">All states</option><option value="failed">Candidate check failed or missing</option><option value="missing">Missing comparisons</option>
+        </select></label>
+        <label className="audit-control">Decision state <select value={selected?.index ?? ""} onChange={(e) => setIndex(Number(e.target.value))}>
+          {choices.map((s) => <option value={s.index} key={s.index}>{s.seed} · {s.phase} · {s.complete ? s.summaries?.candidate.repeatable ? "passed" : "failed" : "missing"}</option>)}
+        </select></label>
+      </div>
+      {selected ? <>
+        {!selected.complete && <div role="alert" className="notice danger">Missing comparison evidence. {selected.error ?? "This state did not complete."}</div>}
+        <div className="trajectory">
+          {selected.board && selected.state && <div className="board-panel"><BoardView board={selected.board} state={selected.state} /></div>}
+          <div className="decision">
+            <span className="eyebrow">Source game {selected.seed} · {selected.phase}</span>
+            <h3>{selected.state ? `Turn ${selected.state.turn} · ${selected.state.current_color.toLowerCase()}` : "State not recorded"}</h3>
+            <p>Exact replay: {selected.replay?.passed ? `passed in three processes; ${selected.replay.steps} subsequent actions checked` : selected.replay ? "failed the original fingerprint check; reward searches were skipped" : "not verified in this comparison"}.</p>
+            {Object.entries(selected.summaries ?? {}).map(([arm, s]) => <p key={arm}><strong>{titleCase(arm)}:</strong> {s.repeatable ? "repeatable" : "failed repeatability"}; {percent(s.cutoff_fraction)} of rollouts reached a cutoff. Value spreads: {s.value_spreads.map((v) => num(v, 4)).join(", ")}.</p>)}
+          </div>
+        </div>
+        {selected.arms && <div className="table-wrap"><table>
+          <thead><tr><th>Legal action</th>{["control", "candidate"].flatMap((arm) => selected.arms![arm].map((r, j) => <th key={`${arm}-${r.seed}`}>{titleCase(arm)} {j + 1}<br />value / visits</th>))}</tr></thead>
+          <tbody>{(selected.actions ?? []).map((action, i) => <tr key={action}><td>A{i}: {semanticAction(action)}</td>
+            {["control", "candidate"].flatMap((arm) => selected.arms![arm].map((r) => <td key={`${arm}-${r.seed}`}>{num(r.values[i], 5)} / {r.visits[i]}{Math.max(...r.values) - r.values[i] <= 1e-8 ? " *" : ""}</td>))}
+          </tr>)}</tbody>
+        </table></div>}
+        <p className="footnote">* Highest value in that repeat, including ties. No game action is executed in this view.</p>
+      </> : <div className="empty-chart">No states in this filter.</div>}
+    </section>
+  </>;
+}
+
 function App() {
   const [runs, setRuns] = useState<Run[]>([]),
     [selected, setSelected] = useState(
@@ -723,6 +822,7 @@ function App() {
                   <div className="notice">Engineering smoke test. Small budgets and shortened games; excluded from playing-strength claims.</div>
                 )}
                 {tab === "overview" && run.algorithm === "reward_audit" && <RewardAudit run={run} />}
+                {tab === "overview" && run.algorithm === "terminal_return_comparison" && <RewardComparison run={run} />}
                 {tab === "overview" && llmTraining && (
                   <>
                     <div className="stats">
@@ -834,7 +934,7 @@ function App() {
                     </section>
                   </>
                 )}
-                {tab === "overview" && !preflight && !llmTraining && run.algorithm !== "reward_audit" && (
+                {tab === "overview" && !preflight && !llmTraining && run.algorithm !== "reward_audit" && run.algorithm !== "terminal_return_comparison" && (
                   <>
                     <div className="stats">
                       <Stat

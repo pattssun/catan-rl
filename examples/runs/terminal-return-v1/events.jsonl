@@ -1,0 +1,26 @@
+{"kind": "replay", "timestamp": "2026-10-02T02:24:47.891187+00:00", "index": 0, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:24:49.110740+00:00", "index": 1, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:24:51.791987+00:00", "index": 2, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:24:53.438887+00:00", "index": 3, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:24:56.140602+00:00", "index": 4, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:24:57.884292+00:00", "index": 5, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:00.603975+00:00", "index": 6, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:02.269901+00:00", "index": 7, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:04.883317+00:00", "index": 8, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:06.494916+00:00", "index": 9, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:09.162544+00:00", "index": 10, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:10.789206+00:00", "index": 11, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:13.394609+00:00", "index": 12, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:14.997161+00:00", "index": 13, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:17.738280+00:00", "index": 14, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:19.527193+00:00", "index": 15, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:22.178757+00:00", "index": 16, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:23.860171+00:00", "index": 17, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:26.466243+00:00", "index": 18, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:28.066680+00:00", "index": 19, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:30.796019+00:00", "index": 20, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:32.485135+00:00", "index": 21, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:35.082170+00:00", "index": 22, "passed": false}
+{"kind": "replay", "timestamp": "2026-10-02T02:25:36.756249+00:00", "index": 23, "passed": false}
+{"kind": "prerequisite_failure", "timestamp": "2026-10-02T02:25:36.756579+00:00", "error": "Panel state recovery prerequisite failed"}
+{"kind": "finished", "timestamp": "2026-10-02T02:25:36.964494+00:00", "status": "incomplete", "comparison_sha256": "ea027479edb2531c6fc6d74802b3db75733a1c59399f65188029e23b2568f47f"}

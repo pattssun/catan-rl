@@ -200,3 +200,27 @@ def test_full_resume_matches_uninterrupted_training(tmp_path, monkeypatch):
     resumed = torch.load(tmp_path / "resumed/iter002.pt", weights_only=False)["state_dict"]
     for key in continuous:
         assert torch.equal(continuous[key], resumed[key]), key
+
+
+def test_reward_comparison_api_requires_hash_and_rejects_missing_or_tampered_data(tmp_path):
+    import hashlib
+    root = tmp_path / "runs"
+    writer = RunWriter(root / "comparison", "terminal_return_comparison", {})
+    client = TestClient(create_app([root], tmp_path / "review.sqlite", tmp_path / "no-dist"))
+    url = "/api/runs/0-comparison/comparison"
+    assert client.get(url).status_code == 404
+    path = writer.directory / "comparison.json"
+    report = {"rules": {"schema": "terminal_return_comparison_v1"}, "status": "incomplete", "complete": False,
+              "recommend_training_design": False, "states": [], "arms": {"control": {}, "candidate": {}}}
+    path.write_text(json.dumps(report))
+    assert client.get(url).status_code == 409
+    writer.finish(comparison_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    assert client.get(url).json()["status"] == "incomplete"
+    report["recommend_training_design"] = True
+    path.write_text(json.dumps(report))
+    assert client.get(url).status_code == 409
+    path.unlink()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{}')
+    path.symlink_to(outside)
+    assert client.get(url).status_code == 404

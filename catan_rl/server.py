@@ -114,6 +114,47 @@ class Store:
             raise HTTPException(409, "Reward audit is unreadable")
         return report
 
+    def comparison(self, key):
+        directory = self.directory(key)
+        path = directory / "comparison.json"
+        if not path.is_file() or not path.resolve().is_relative_to(directory.resolve()):
+            raise HTTPException(404, "Reward comparison not available")
+        raw = path.read_bytes()
+        manifest = json.loads((directory / "manifest.json").read_text())
+        expected = manifest.get("comparison_sha256")
+        if not expected or hashlib.sha256(raw).hexdigest() != expected:
+            raise HTTPException(409, "Reward comparison hash does not match its run manifest")
+        try:
+            report = json.loads(raw)
+            if (report["rules"]["schema"] != "terminal_return_comparison_v1"
+                    or not isinstance(report["states"], list)
+                    or set(report["arms"]) != {"control", "candidate"}):
+                raise ValueError("Invalid comparison report")
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(409, "Reward comparison is unreadable")
+        for row in report["states"]:
+            index = row.get("index")
+            if type(index) is not int or not 0 <= index < 24:
+                raise HTTPException(409, "Invalid comparison state index")
+            relative = f"replay/{index:02d}.json"
+            replay_path = directory / relative
+            if replay_path.is_file():
+                if not replay_path.resolve().is_relative_to(directory.resolve()):
+                    raise HTTPException(409, "Invalid replay evidence path")
+                replay_raw = replay_path.read_bytes()
+                if hashlib.sha256(replay_raw).hexdigest() != manifest.get("evidence_sha256", {}).get(relative):
+                    raise HTTPException(409, "Replay evidence hash mismatch")
+                row["replay"] = json.loads(replay_raw)
+        diagnosis_path = directory / "diagnosis.json"
+        if diagnosis_path.is_file():
+            if not diagnosis_path.resolve().is_relative_to(directory.resolve()):
+                raise HTTPException(409, "Invalid diagnosis path")
+            diagnosis_raw = diagnosis_path.read_bytes()
+            if hashlib.sha256(diagnosis_raw).hexdigest() != manifest.get("diagnosis_sha256"):
+                raise HTTPException(409, "Diagnosis hash mismatch")
+            report["diagnosis"] = json.loads(diagnosis_raw)
+        return report
+
 
 def create_app(roots=None, database="runs/reviews.sqlite3", dist="dashboard/dist"):
     store = Store(roots or ["runs", "examples/runs"], database)
@@ -151,6 +192,10 @@ def create_app(roots=None, database="runs/reviews.sqlite3", dist="dashboard/dist
     @app.get("/api/runs/{run}/audit")
     def audit_detail(run: str):
         return store.audit(run)
+
+    @app.get("/api/runs/{run}/comparison")
+    def comparison_detail(run: str):
+        return store.comparison(run)
 
     @app.post("/api/runs/{run}/episodes/{episode}/reviews")
     def review(run: str, episode: str, value: Review):

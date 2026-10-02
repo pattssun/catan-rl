@@ -1,87 +1,92 @@
-# Next milestone: can we trust the reward?
+# Replay and terminal-return experiment
 
-The project already has hand-written search, self-play, GRPO, and a working dashboard. The next milestone is a reproducible explanation of why a better training score did not mean better play, plus checks that catch this before another expensive run.
+Can we restore a decision state exactly? If so, does rewarding actual, earlier wins provide a more useful training signal than awarding a win to the VP leader at a rollout cutoff?
 
-The audit checks reward design, controls, and evaluation before further training.
+The previous audit found 77/192 flat training states and eight replay mismatches in a 24-state panel. Last-ID choice scored 71.1% agreement, above GRPO's 67.2%. These findings justify checking the environment and reward before another training run. The original experiments and their failed success rules remain unchanged.
 
-## Scope and limits
+## Limits
 
-Complete steps 1 to 4 below. Success means a working, tested audit and a defensible report, including a failed quality gate. It does not require a stronger policy. Keep the original experiment and its failed success rule unchanged.
+- One local CPU worker. No model training, paid compute, or new model downloads.
+- At most two hours for the measured panel, including collection and verification. Each state comparison has a five-minute limit, capped by the remaining budget. Missing states stay missing; no replacements or extensions.
+- Before measurement, freeze this protocol and the code in a fresh run directory. Record commands, source and dependency hashes, engine version, action ordering, seeds, elapsed time, and missing evidence.
+- Keep historical datasets and interfaces unchanged. This experiment uses newly collected states.
+- Stop at a failed prerequisite. Report failure or incomplete evidence without tuning the thresholds or trying another reward variant.
 
-- Local CPU/MPS only; no paid services, cloud machines, or new large models.
-- At most two hours of new audit compute, one worker, with partial results marked incomplete. Each three-repeat state unit has a five-minute wall-clock limit, capped by the remaining total budget. No new optimizer updates in this goal.
-- Routine code changes, tests, local measurements, and dashboard checks are authorized. Ask before each commit. Do not push, publish posts, change Git history, or touch another project's processes.
-- Every measurement records its command, source and input hashes, seeds, sample count, elapsed time, and missing results. Never overwrite a run.
-- If a check fails, retain the evidence. Do not lower the threshold, change the cohort, or keep trying variants until something passes.
+## 1. Exact state recovery
 
-## Ordered work and checks
+Diagnose action-order and random-number differences across fresh processes. Save versioned JSON with enough information to recover hidden hands, deck order, board state, pending decisions, and environment RNG state. An action journal is acceptable only if it records chance outcomes and verifies the complete recovered semantic state.
 
-### 1. Audit the existing evidence
+Canonicalize legal-action order at the new environment boundary without adding or removing actions. Keep this separate from the original Stage 6 interface. Reject corrupt records and incompatible engine versions. Restoring a state must not change unrelated random streams.
 
-Recompute label ties, action IDs, action types, and the SFT target distribution for every dataset split. Compare teacher agreement with uniform legal choice, first legal ID, last legal ID, and END_TURN when available (first ID otherwise). Separate setup/play and flat/informative states. Join the existing untuned/SFT/GRPO held-out predictions by state ID, with missing or duplicate IDs treated as errors.
+**Check:** cover setup, ordinary play, development cards, and robber decisions. Restore each fixture in fresh processes with `PYTHONHASHSEED=0,1,2`. Compare full semantic state and legal actions, then the next 100 actions or terminal outcome under the same deterministic policy and RNG. All checks must pass before the reward comparison. Matching only the public prompt is insufficient.
 
-For action-order controls, calculate the expected fixed-ID agreement after a uniform menu permutation. This is an analytic control, not a claim that the language model is invariant to menu order. Identify concrete examples where a high-scoring answer provides no strategic evidence.
+## 2. One fixed reward comparison
 
-**Check:** one command creates a hash-linked JSON report from the original files. Independent toy cases verify the arithmetic. The report distinguishes observed collapse, possible explanations, and causes not yet established. It must not call a suspicious episode a proven reward exploit.
+Collect 12 source games using seeds 230000 through 230011, `value` versus `weighted`, with alternating seats and canonical action order. Use reservoir sampling to select one setup and one play decision per game. Exclude forced decisions and menus over 100 actions. Use sampling seed `game_seed + 17` and decision seed `game_seed + 29`; cap each game at 400 turns or 8,000 actions. Save complete states when selected. Missing phases remain missing.
 
-### 2. Test teacher reliability and build a quality gate
+This gives up to 24 diagnostic states, not a held-out playing-strength evaluation. Compare two objectives on exactly these states:
 
-Reconstruct 24 training states: for each of the first 12 training game seeds, take the earliest sampled setup state and earliest sampled play state. Match saved prompts and legal actions exactly before re-labeling. Missing states or replay mismatches are explicit failures, not replacements. Use three independent teacher searches per state, with seeds `900000 + 10 * panel_index + repeat_index`, preserving the original two-world, 100-simulations-per-world teacher. A prompt/menu match cannot verify hidden-state recovery because the original full states were not saved.
+| Setting | Control | Candidate |
+| --- | --- | --- |
+| Terminal outcome | Win +1, draw 0, loss -1 | Same |
+| Nonterminal cutoff | VP leader wins; tied leaders draw | 0 |
+| Time preference | None | Terminal return multiplied by `0.995 ** k` |
+| Stored value | `(return + 1) / 2` | Same |
 
-Also test environment correctness independently: executing a deterministic winning legal action must produce an engine-declared win; passing must not be labeled a terminal win solely for leading at a cutoff. Verify that prompt text does not change when inaccessible opponent card identities or deck order change while public counts stay fixed. Record the teacher's privileged resource access separately.
+`k` is the number of actions after the candidate action until termination. An immediate winning action has `k=0` and value 1. Count tree edges as well as rollout actions when backing up a discounted return. Values are from the perspective of the player who chose the action.
 
-Quality thresholds below are engineering acceptance criteria, not statistical guarantees. The old experiment's aggregate results are already known; this is a retrospective audit, not a new preregistered success claim.
+Both arms use two determinized development-card worlds, 100 MCTS simulations per world, a 120-turn rollout horizon, and a 1,000-action rollout cap. Run three repeats per state with seeds `940000 + 10 * state_index + repeat_index`. Enumerate states by source seed, then setup/play. Resource hands remain privileged teacher information and must be labeled as such.
 
-| Check | Requirement before recommending another training experiment |
-| --- | --- |
-| Integrity | All hashes, split separation, prediction joins, and replay matches pass. |
-| Environment and information boundary | All deterministic correctness and prompt-privacy fixtures pass. |
-| Usable reward | At least 75% of training states distinguish some legal actions. Report the full distribution, not just this threshold. |
-| Teacher repeatability | At least 80% of the 24 panel states have a non-flat reward in all three repeats and at least one maximizing action shared across all three. Flat states count as failures. |
-| Shortcut warning | Flag if first-ID or END_TURN control reaches within five agreement points of the trained model on informative held-out states. This is a review flag, not a claim of causality. |
-| Completion | All required audit units finish within the budget; otherwise the recommendation is inconclusive. |
+The control shares the new action cap and canonical ordering. It is a diagnostic control, not a reproduction of the original uncapped labels. The candidate changes both cutoff handling and time preference; this comparison cannot isolate their separate effects.
 
-**Check:** a machine-readable gate reports pass/fail/incomplete for each requirement and refuses to issue a training recommendation on failure or missing evidence. Tests include deliberately corrupt inputs, all-tied rewards, unstable teacher rankings, and a valid small fixture. A recommendation is not proof of playing strength.
+**Correctness check:** independently calculated trajectories and real-engine fixtures verify immediate wins, delayed wins, losses, draws, cutoff behavior, and player perspective. A cutoff lead must never count as a terminal win in the candidate.
 
-### 3. Make the diagnosis inspectable
+**Acceptance checks, fixed before measurement:**
 
-Add one reward-quality view to the existing dashboard. Show the gate, denominators, trivial baselines, tie rates, and repeatability. Let a reviewer open flagged states, see their legal actions and values, and compare repeated labels. Reuse the existing board viewer where practical. Keep the current run/episode workflow.
+- All integrity, replay, and correctness checks pass; every action is visited in both worlds.
+- All 24 states and all required repeats finish within budget.
+- At least 18/24 candidate states have non-flat values in every repeat, using tolerance `1e-8`.
+- At least 20/24 candidate states are non-flat in every repeat and share at least one maximizing semantic action across all three repeats.
 
-**Check:** Python API tests, TypeScript build, and a manual browser check against both a complete report and missing/incomplete evidence. Bundle a small reproducible audit example. Avoid a redesign, authentication, cloud deployment, or a generic experiment platform.
+The last threshold also implies the non-flat threshold. Report both as separate diagnostics, alongside the control's rates, value spreads, ties, visits, rollout cutoff frequency, and runtime. Passing these engineering checks establishes usable and repeatable signal on this small panel, not correct action rankings or stronger play.
 
-### 4. Explain the result and make it learnable
+## 3. Reproduction and review
 
-Update the README with measured findings, limitations, the reproduction command, and the next decision. Add a short learning workbook anchored to actual functions and audit examples. Each lesson has a prediction, a small hand calculation or code task, and a way to check the answer:
+Provide one command for replay checks and one for the comparison. Preserve raw states, repeated labels, manifests, hashes, and incomplete units. Recompute aggregates without rerunning search. Keep the previous audit available.
 
-1. State, observation, action, and actual terminal reward: trace one game decision.
-2. MCTS: calculate visit counts and backed-up action values in a tiny tree.
-3. GRPO: calculate advantages for `[0, 0, 1, 1]` and `[1, 1, 1, 1]`; explain what can still change under KL regularization.
-4. Policy updates: explain old policy versus reference policy; predict clipping for positive and negative advantages.
-5. Evaluation: explain why teacher agreement, output validity, and actual wins answer different questions; keep paired seats together when estimating uncertainty.
+Extend the existing dashboard only where needed to compare the two objectives and inspect missing or failed evidence. Reuse the current state and board views.
 
-**Check:** another person can follow the commands and trace each public claim to an artifact. Tests pass, the frontend builds, and the original experiment's evidence is unchanged.
+**Check:** relevant Python tests pass. If the UI changes, the frontend builds and browser checks cover complete, failed, and missing evidence. Every reported number traces to a saved artifact. The original experiment results remain unchanged.
 
-Exercise checks: explain a result without notes, modify a small function, and predict a new failure case.
+## 4. Learning checks
 
-## After this goal
+Extend [LEARNING.md](LEARNING.md) with three exercises grounded in this implementation:
 
-If the reward gate fails, choose one specific repair from the evidence and register its hypothesis, thresholds, and budget before measuring it. Do not start another broad AlphaZero run or add another domain now.
+1. Explain why a seed is not a saved state. Predict how action ordering and RNG position can change a replay, then verify a small example.
+2. Calculate discounted returns and back up a tiny search tree from both players' perspectives. Check against independently calculated values.
+3. Explain why more distinct rewards can still rank actions badly. Specify an experiment and a result that would reject the explanation.
 
-If a corrected teacher passes, the next milestone is one controlled post-training experiment. Before its first update, freeze new game-separated train/dev/test cohorts, SFT and untuned controls, informative-state and uniform-legal baselines, action-order probes, paired actual-win evaluation, checkpoint selection, and compute limits. Preserve the old +10-point agreement/no-observed-win-drop rule as the historical result; never relabel a revised experiment as the original success. Plan for no more than one overnight training budget, with negative or inconclusive results accepted.
+Each exercise needs a prediction, a small calculation or code change, and an independent check. Completion means explaining the result without notes and correctly predicting a new case. Preparing exercises does not establish that understanding.
 
-Decide whether to continue from the measured results and remaining uncertainties.
+## Decision after the comparison
+
+If a prerequisite or reward check fails, retain the result and identify the next specific cause to investigate. No additional reward variants or optimizer updates belong to this experiment.
+
+If all checks pass, design a separate post-training experiment before running it: fresh game-separated train/dev/test data, untuned and SFT controls, hand-written GRPO, action-order controls, informative-state agreement, output validity, and paired actual-win evaluation. Freeze checkpoint selection, success thresholds, and a single overnight budget before the first update. Keep learning stronger play separate from matching a teacher.
 
 ## Progress
 
-- [x] 1. Existing-evidence audit
-- [x] 2. Reliability panel and quality gate
-- [x] 3. Dashboard and bundled example
-- [x] 4. Report, learning workbook, and verification
-- [ ] Learning exercises
-- [x] Commit approval (separate from technical completion)
+- [x] Exact state recovery and independent cross-process checks
+- [x] Fixed reward comparison, or documented prerequisite failure
+- [x] Reproducible artifacts and review checks
+- [x] Learning exercises
 
-Completed 2026-10-01. [Measured report](examples/runs/reward-audit-v1/audit.json): 77/192 flat training states; last-ID agreement 71.1% versus GRPO 67.2%. All 24 panel units were attempted in 84 seconds. Sixteen matched the saved prompt/menu; seven of those passed repeatability. Eight mismatches leave the panel incomplete, so further training is not recommended. No new optimizer updates were run.
+Replay validation covers 12 setup/play/card/robber situations, including pending robber movement and free roads. Each matches the original state's next 100 transitions in three fresh Python processes. Independent checks compare state fields, hidden hands, deck order, legal successors, and RNG state. A separate trade-state probe reproduces differing raw action-menu order under hash seeds 0, 1, and 2; canonical menus agree. This demonstrates an ordering hazard without attributing every historical mismatch to it.
 
-Verification: 58 Python tests pass, including recomputation from the bundled original inputs and rejection of incomplete, duplicate, or tampered evidence. The frontend builds. Browser checks covered the measured incomplete report, a labeled synthetic completed report, missing evidence, state selection, board rendering, and repeated labels. The first panel attempt exposed a reporter error on missing data; its artifacts are preserved in the input archive. Original experiment files and the core training code were not changed during this goal.
+The registered attempt stopped at the replay gate after 78.7 seconds. All 24 original checks failed because the fingerprint encoded object attribute order; the engine's copy changes that order while retaining field values. No reward searches or optimizer updates ran. The original report remains incomplete.
 
-Next decision: first make state recovery testable across processes and preserve full states. Then test one reward repair against a fixed panel before proposing another training experiment. Patrick's first learning check is lesson 1 in [LEARNING.md](LEARNING.md).
+A separate 36.5-second diagnosis used the frozen serializer and the same states and traces. After an engine copy normalized attribute order, all 72 state/process checks had identical fields and matched all 100 saved transitions. This diagnoses the checker, not the reward. The serializer now sorts attribute names, keeps nested dictionary order, and uses snapshot schema v2. New regression tests cover live collection, which the original copied-state fixtures missed.
+
+The next reward attempt requires a separate registration. Do not extend this attempt or turn the diagnosis into a claim that the reward gate passed. Exercises 6 to 8 are prepared; explaining and modifying the implementation remains a separate learning check.
+
+Verification: 85 Python tests pass, including current live-state recovery, per-world action coverage, failed and missing gates, and exact recomputation from the bundled original attempt. The frontend builds. Browser checks covered the measured incomplete report and diagnosis, board/state selection, and labeled synthetic complete, failed, and missing reports. Pytest discovery is restricted to `tests/` so frozen run snapshots are not collected as current tests.

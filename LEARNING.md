@@ -93,3 +93,55 @@ Resample paired boards together for uncertainty estimates. Eight panel states fa
 **Teach-back:** Give a two-minute account of the negative result, one plausible cause, one alternative explanation, and the experiment that would distinguish them.
 
 Completion check: explain the five lessons without notes, make one small code change with a prediction, and verify the result independently.
+
+## 6. Why isn't a seed a saved state?
+
+Read `capture`, `restore`, and `CanonicalGame` in [replay.py](catan_rl/replay.py).
+
+**Predict:** Two processes start with the same game seed. One legal menu comes from a set whose iteration order differs. Both policies choose the first action. Will their next states match? What if the menus match but one process has already consumed an extra random draw?
+
+**Do:** Run `uv run pytest tests/test_replay.py -q`. Inspect the deck-order and RNG-position test. Change one hidden card while keeping the public count fixed, then predict which snapshot and observation checks should change before running them.
+
+<details><summary>Check your answer</summary>
+
+A seed initializes a random stream. It does not preserve the current state, position in that stream, or action ordering. Choosing by position makes menu order part of the behavior. Exact recovery needs hidden state and RNG state too.
+
+The first collection attempt exposed a fingerprint bug: object attribute assignment order changes when the engine copies a state. Attribute names now sort before hashing. Snapshots still keep order inside game dictionaries because engine tie breaking can depend on it. They rebuild only derived board caches. Player decision policies have separate random streams; restoring the environment does not restore a trained policy or its optimizer.
+
+</details>
+
+**Teach-back:** Explain why matching a public prompt is weaker evidence than matching hidden state and 100 future transitions.
+
+## 7. How far away is the reward?
+
+Read `backed_up_value` and the path backup in [mcts.py](catan_rl/mcts.py).
+
+**Predict:** RED chooses an action. Two more tree edges and one rollout action lead to RED winning. With discount 0.5, calculate the signed return and stored value from RED's and BLUE's perspectives. What changes if RED wins immediately?
+
+**Do:** Run `uv run pytest tests/test_terminal_returns.py -q`. Change the tiny chain's length and calculate the expected root value before changing the assertion. Repeat with more simulations: expanding the tree must not change the total distance to the same outcome.
+
+<details><summary>Check your answer</summary>
+
+Three subsequent actions give signed returns +0.125 and -0.125. Mapping through `(return + 1) / 2` gives 0.5625 and 0.4375. An immediate win gives 1 for RED and 0 for BLUE. A nonterminal cutoff gives 0.5 for both under the terminal-only objective.
+
+Count actions after the chosen action, including both tree edges and rollout actions. Counting only rollout actions would make the value change as the search tree grows.
+
+</details>
+
+**Teach-back:** Explain why the player choosing each edge determines the perspective used in its backup.
+
+## 8. Does a more detailed reward mean better decisions?
+
+Read the comparison thresholds in [PLAN.md](PLAN.md).
+
+**Predict:** Suppose almost every action receives a distinct value and repeated searches agree. Does that establish a useful training target?
+
+**Do:** Give one repeatable but misleading reward. Write a test of action quality using actual game outcomes, with a fixed budget and a result that would reject your explanation. Keep that test separate from measuring whether the policy can reproduce the teacher's labels.
+
+<details><summary>Check your answer</summary>
+
+A reward based only on action ID could be distinct and perfectly repeatable while having no strategic meaning. Discounted terminal returns could also favor a policy that performs well against random rollouts but poorly against a stronger opponent. Signal and repeatability are prerequisites, not evidence of stronger play.
+
+</details>
+
+**Teach-back:** Explain what each of exact replay, reward repeatability, teacher agreement, and actual wins establishes, and what it leaves unanswered.
