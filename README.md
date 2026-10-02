@@ -72,11 +72,45 @@ Exact replay and repeat-search outcomes may differ across processes because the 
 
 ## Replay and reward comparison
 
-The [fixed comparison](PLAN.md) stopped before either reward arm ran. All 24 states failed its fingerprint check in a 79-second attempt. The bug was in the checker: it treated Python attribute assignment order as game state, while the engine's `copy()` changes that order.
+The [registered retry](PLAN.md) finished all 24 states in **4m 34s**. Exact state recovery passed in all 72 process checks. The reward failed its fixed repeatability threshold, so no further training ran.
 
-The follow-up [diagnosis](examples/runs/terminal-return-v1/diagnosis.json) checked every state in three processes. All 72 checks had identical fields and matched the saved 100-action trajectories after normalizing attribute order. The serializer now sorts attribute names while preserving order within game dictionaries. New tests cover live collection as well as copied fixtures.
+| Reward | Non-flat states | Repeatable best action |
+| --- | ---: | ---: |
+| VP leader at cutoff | 14/24 | 3/24 |
+| Discounted terminal outcome | 22/24 | 5/24 |
+| Required for the candidate | At least 18/24 | At least 20/24 |
 
-The [original report](examples/runs/terminal-return-v1/comparison.json) remains incomplete. There are no reward-comparison results or new training updates. The dashboard shows the failed checks, boards, and diagnosis ([preview](examples/replay-comparison.png)). The next experiment would retry the same reward protocol after a separate registration; this attempt was not extended.
+Non-flat means that actions received different values in every repeat. Repeatable means the three searches shared a highest-value action and were all non-flat. The new reward produced more distinctions, but its rankings remained unstable under this search budget. These checks do not establish which action is strategically correct.
+
+In the first setup state, the candidate preferred settlement nodes 20, 13, and 4 across its three searches. Across setup states, 86.1% of candidate rollouts ended without a winner. Sparse terminal outcomes are one plausible contributor to the instability, not a proven cause. More training would not resolve an unreliable teacher by itself.
+
+Inspect the [complete report](examples/runs/terminal-return-v2/comparison.json), [dashboard preview](examples/terminal-return-v2.png), or [learning example](LEARNING.md#8-does-a-more-detailed-reward-mean-better-decisions).
+
+<details>
+<summary>Reproduce the completed comparison</summary>
+
+The [input archive](examples/terminal-return-v2-inputs.zip) includes all states, live reference traces, repeated action values and visits, the pre-run protocol, frozen source, and hashes. Recompute the report without running search:
+
+```bash
+uv run python -m zipfile -e examples/terminal-return-v2-inputs.zip runs/terminal-v2-inputs
+uv run python -m catan_rl.reward_compare summarize --out runs/terminal-v2-inputs/terminal-return-v2
+```
+
+The result is `complete: true`, `status: "fail"`, and `recommend_training_design: false`. The command's successful exit means the evidence was verified, not that the reward passed. `seconds` is the recorded runtime and is not recalculated by the summary command.
+
+To verify one state's exact recovery in three processes:
+
+```bash
+(cd runs/terminal-v2-inputs/terminal-return-v2/source && \
+  ../../../../.venv/bin/python -m catan_rl.replay ../states/00.json \
+  --check --expected ../states/00.expected.json)
+```
+
+Exact replay uses the recorded Python 3.13.5 and engine/dependency versions. The two-hour ceiling included correctness tests, collection, replay, and search; the run finished well within it. No missing states were replaced and no thresholds changed.
+
+</details>
+
+The [first attempt](examples/runs/terminal-return-v1/comparison.json) stopped before reward search because its fingerprint treated attribute assignment order as game state. A separate [diagnosis](examples/runs/terminal-return-v1/diagnosis.json) showed identical fields and matching 100-action trajectories after an engine copy normalized that order. The corrected serializer sorts attribute names while preserving order inside game dictionaries. The retry recovered the same 24 states and RNG positions. Both attempts remain available.
 
 <details>
 <summary>Reproduce the replay failure and diagnosis</summary>

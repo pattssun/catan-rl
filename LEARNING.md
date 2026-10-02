@@ -54,6 +54,10 @@ Equal rewards provide no relative policy-gradient signal. Parameters can still c
 
 </details>
 
+**Real group:** Open the [original GRPO events](examples/runs/stage6-v1-grpo/events.jsonl), round 1, state `110017-131`. The outputs were `[A3, A3, A3, A4]`, with rewards approximately `[-0.93023, -0.93023, -0.93023, -1]`. Calculate the advantages before reading the saved ones. They are approximately `[0.57545, 0.57545, 0.57545, -1.72634]`; an independent plain-Python calculation matches the logged values within `1e-5`.
+
+Explain why three advantages are positive even though every reward is negative. Apply the next lesson's clipping calculation to the first and last completion. These records come from the original failed experiment; their arithmetic does not validate the teacher's action rankings.
+
 **Teach-back:** Explain why higher sampled reward can coexist with no useful strategic learning.
 
 ## 4. What keeps a policy update under control?
@@ -143,5 +147,23 @@ Read the comparison thresholds in [PLAN.md](PLAN.md).
 A reward based only on action ID could be distinct and perfectly repeatable while having no strategic meaning. Discounted terminal returns could also favor a policy that performs well against random rollouts but poorly against a stronger opponent. Signal and repeatability are prerequisites, not evidence of stronger play.
 
 </details>
+
+**Measured example:** In the [completed retry](examples/runs/terminal-return-v2/comparison.json), 22/24 candidate states were non-flat, but only 5/24 shared a best action across repeats. The fixed requirements were 18/24 and 20/24. Before running the snippet, predict whether this permits training.
+
+```bash
+uv run python - <<'PYCODE'
+import json
+from pathlib import Path
+
+report = json.loads(Path("examples/runs/terminal-return-v2/comparison.json").read_text())
+state = report["states"][0]
+for repeat in state["arms"]["candidate"]:
+    best = max(range(len(repeat["values"])), key=repeat["values"].__getitem__)
+    node = json.loads(state["actions"][best])["items"][2]
+    print(repeat["seed"], "settlement node", node)
+PYCODE
+```
+
+The output is nodes 20, 13, and 4: three different preferences for the same replay-verified state. No new optimizer updates followed. Explain why the measured failure is a noisy ranking, rather than evidence that all three actions are bad. Then describe what additional evidence would distinguish too few simulations from a poor rollout policy. Do not run another experiment before fixing its scope and success rule.
 
 **Teach-back:** Explain what each of exact replay, reward repeatability, teacher agreement, and actual wins establishes, and what it leaves unanswered.
