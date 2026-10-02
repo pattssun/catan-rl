@@ -33,7 +33,42 @@ GRPO gained 13.3 agreement points, but the observed win rate fell by ten points.
 
 Output validity rose from 82% to 100% on held-out states. On the 61 states where the teacher distinguished actions, agreement moved only from 29.5% to 31.1%. A uniform legal choice scores 68.8% on the full set because ties are common. The untuned game baseline also used random legal fallbacks on 26% of decisions; neither trained policy needed them. Better formatting is clear; better strategy is not.
 
-[Results and paired comparisons](examples/results.json) include both failed experiments. Next: audit teacher stability and action-order baselines before spending more on training. No reward exploit has been established.
+[Results and paired comparisons](examples/results.json) include both failed experiments. No reward exploit has been established.
+
+## Reward audit
+
+The audit does **not recommend more training** with the current labels:
+
+- Always choosing the last legal action scores 71.1% held-out agreement, above GRPO's 67.2%. This control has not been tested in full games.
+- All actions tie in 77/192 training states. The SFT tie rule targets END_TURN in 65/88 states where it is available. That is a possible contributor to passing, not a proven cause.
+- Of 24 fixed reliability-panel states, 16 matched the saved prompts and legal menus; eight did not. Only seven of those 16 passed the three-search repeatability check. The full-panel estimate remains incomplete. Full hidden states were not saved, so a matching prompt cannot verify exact hidden-state recovery.
+
+The [report](examples/runs/reward-audit-v1/audit.json) retains every audited state and attempted panel unit. The dashboard shows controls, quality checks, boards, and repeated action values ([preview](examples/reward-audit.png)). Thresholds are in the [plan](PLAN.md); this is a retrospective audit of an already observed failure. The panel attempt took 84 seconds on CPU. No new training updates were made.
+
+Next: preserve fully replayable states and diagnose action-order sensitivity before changing the reward. Game seeds alone were insufficient in this audit. Catanatron generates some action menus from sets; their role in the failed replays has not been isolated. The [learning exercises](LEARNING.md) walk through the implementation and these findings.
+
+<details>
+<summary>Reproduce the audit</summary>
+
+The [318 KB input archive](examples/reward-audit-inputs.zip) contains the original label files, evaluation predictions and manifests, the audit's source snapshot, and the interrupted first attempt. That attempt hit a reporting bug on missing evidence; the corrected attempt kept the same cohort and thresholds. Neither attempt changed the original experiment.
+
+```bash
+uv run python -m zipfile -e examples/reward-audit-inputs.zip runs/audit-inputs
+uv run python -m catan_rl.audit --static-only \
+  --dataset runs/audit-inputs/dataset --untuned runs/audit-inputs/untuned \
+  --sft runs/audit-inputs/sft --grpo runs/audit-inputs/grpo --out runs/audit-static
+uv run python -m catan_rl.audit --check-run examples/runs/reward-audit-v1
+```
+
+The last command deliberately exits 2: incomplete or failed evidence cannot yield a pass. Static aggregates should reproduce exactly. To attempt fresh teacher searches, cache the pinned tokenizer and repeat the audit command without `--static-only`, using a fresh output directory and `uv run --extra llm`. It uses one worker, a two-hour total limit, and a five-minute limit per state. No model weights are needed.
+
+```bash
+uv run --extra llm python -c 'from transformers import AutoTokenizer; from catan_rl.stage6 import MODEL_ID, REVISION; AutoTokenizer.from_pretrained(MODEL_ID, revision=REVISION)'
+```
+
+Exact replay and repeat-search outcomes may differ across processes because the old run did not freeze every source of environment nondeterminism. A replay mismatch is recorded and skipped, never replaced. The archive's source snapshot lets you inspect what produced the reported attempt; it does not recover missing full game states.
+
+</details>
 
 ## Run it
 

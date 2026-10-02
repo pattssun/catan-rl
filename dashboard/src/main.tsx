@@ -86,6 +86,32 @@ type Board = {
   }[];
   nodes: Record<string, { tile_coordinate: number[]; direction: string }>;
 };
+type AuditSummary = {
+  states: number; source_games: number; informative_states: number; flat_states: number;
+  informative_fraction: number | null; sft_end_turn_targets: number; end_turn_eligible: number;
+  agreement_baselines: Record<string, number | null>;
+};
+type AuditState = {
+  id: string; split: string; game_seed: number; state: State; board: Board;
+  actions: { type: string; value: unknown }[]; values: number[]; visits: number[];
+  best: number[]; sft_target: number; flags: string[];
+  predictions: Record<string, { output: string; agreement: boolean; valid: boolean }>;
+};
+type AuditUnit = {
+  index: number; state_id?: string; complete: boolean; replay_match: boolean | null;
+  repeatable?: boolean | null; error?: string;
+  repeats?: { seed: number; values: number[]; visits: number[]; best: number[] }[];
+};
+type Audit = {
+  complete: boolean; elapsed_seconds: number;
+  gate: { status: string; recommend_training: boolean; note: string;
+    checks: { name: string; status: string; value: unknown; requirement: string }[] };
+  splits: Record<string, Record<string, AuditSummary>>;
+  models: Record<string, Record<string, { states: number; agreement: number | null; valid_rate: number | null }>>;
+  panel: AuditUnit[]; states: AuditState[];
+  shortcut_flags: { arm: string; baseline: string; reason: string }[];
+  permutation_note: string;
+};
 const percent = (v: unknown) =>
   typeof v === "number" ? `${(v * 100).toFixed(0)}%` : "Not recorded";
 const num = (v: unknown, n = 2) =>
@@ -315,6 +341,107 @@ function BoardView({ board, state }: { board: Board; state: State }) {
       })}
     </svg>
   );
+}
+
+function RewardAudit({ run }: { run: Run }) {
+  const [report, setReport] = useState<Audit | null>(null);
+  const [error, setError] = useState("");
+  const [cohort, setCohort] = useState("informative");
+  const [filter, setFilter] = useState("all");
+  const [stateId, setStateId] = useState("");
+  useEffect(() => {
+    setReport(null); setStateId(""); setFilter("all"); setError("");
+  }, [run.id]);
+  useEffect(() => {
+    let active = true;
+    api<Audit>(`/api/runs/${run.id}/audit`).then((data) => {
+      if (active) { setReport(data); setError(""); }
+    }).catch((e) => { if (active) { setReport(null); setError(String(e)); } });
+    return () => { active = false; };
+  }, [run]);
+  if (error) return <div role="alert" className="notice danger">Reward audit unavailable. No training recommendation can be verified. {error}</div>;
+  if (!report) return <div className="empty-chart">Loading reward audit...</div>;
+  const train = report.splits.train.all;
+  const test = report.splits.test[cohort];
+  const completed = report.panel.filter((p) => p.complete).length;
+  const stable = report.panel.filter((p) => p.repeatable === true).length;
+  const options = report.states.filter((s) => filter === "all" ||
+    (filter === "panel" ? report.panel.some((p) => p.state_id === s.id) : s.flags.includes(filter)));
+  const state = options.find((s) => s.id === stateId) ?? options[0];
+  const unit = report.panel.find((p) => p.state_id === state?.id);
+  return <>
+    <div className={`notice ${report.gate.recommend_training ? "" : "danger"}`}>
+      <strong>{report.gate.recommend_training ? "Quality checks passed." : "Further training is not recommended."}</strong>
+      <span>Gate: {report.gate.status}. {report.gate.note}</span>
+    </div>
+    <div className="stats">
+      <Stat label="INFORMATIVE TRAINING STATES" value={`${train.informative_states}/${train.states}`} detail="Some legal actions receive different values" />
+      <Stat label="FLAT TRAINING STATES" value={`${train.flat_states}/${train.states}`} detail="All legal actions get the same reward" />
+      <Stat label="REPEATABLE PANEL STATES" value={completed === 24 ? `${stable}/24` : "Incomplete"} detail={`${completed}/24 units complete; ${stable} pass so far`} />
+      <Stat label="SFT PASS TARGETS" value={`${train.sft_end_turn_targets}/${train.end_turn_eligible}`} detail="States where END_TURN was available" />
+    </div>
+    <section className="panel">
+      <PanelTitle label="Pre-training quality checks" caption="Retrospective audit of the original experiment; fixed engineering thresholds" />
+      <div className="table-wrap"><table>
+        <thead><tr><th>Check</th><th>Status</th><th>Observed</th><th>Requirement</th></tr></thead>
+        <tbody>{report.gate.checks.map((c) => <tr key={c.name}>
+          <td>{titleCase(c.name)}</td><td><span className={`pill ${c.status === "fail" ? "red" : c.status === "incomplete" ? "amber" : ""}`}>{c.status}</span></td>
+          <td>{c.value === null ? "Missing" : typeof c.value === "number" ? percent(c.value) : typeof c.value === "object" ? `${Object.values(c.value).filter((v) => v === true).length}/${Object.keys(c.value).length} passed` : String(c.value)}</td>
+          <td>{c.requirement}</td>
+        </tr>)}</tbody>
+      </table></div>
+      <p className="footnote">Teacher search uses privileged resource hands and a VP-leader cutoff reward. Repeated agreement alone cannot validate its strategy. Audit compute: {num(report.elapsed_seconds, 1)} seconds.</p>
+    </section>
+    <section className="panel">
+      <PanelTitle label="Does agreement beat a trivial answer?" caption="Same saved held-out states; these are action-choice scores, not game win rates" />
+      <label className="audit-control">Held-out cohort <select value={cohort} onChange={(e) => setCohort(e.target.value)}>
+        {Object.keys(report.splits.test).map((key) => <option value={key} key={key}>{titleCase(key)}</option>)}
+      </select></label>
+      <p className="muted">{test.states} states from {test.source_games} games; {test.flat_states} have flat rewards.</p>
+      <div className="table-wrap"><table><thead><tr><th>Policy or control</th><th>Agreement</th><th>Valid outputs</th></tr></thead>
+        <tbody>{Object.entries(test.agreement_baselines).map(([name, value]) => <tr key={name}><td>{titleCase(name)}</td><td>{percent(value)}</td><td>100% by construction</td></tr>)}
+          {Object.entries(report.models).map(([name, groups]) => <tr key={name}><td>{name}</td><td>{percent(groups[cohort].agreement)}</td><td>{percent(groups[cohort].valid_rate)}</td></tr>)}
+        </tbody>
+      </table></div>
+      <p className="footnote">{report.permutation_note}</p>
+      {report.shortcut_flags.length > 0 && <div className="notice">Trivial answers approach or exceed trained agreement on informative states. This needs review; it does not establish a reward exploit.</div>}
+    </section>
+    <section className="panel">
+      <PanelTitle label="Inspect the labels" caption="Open the original state and compare cached values with independent repeat searches" />
+      <div className="audit-controls">
+        <label className="audit-control">Show <select value={filter} onChange={(e) => { setFilter(e.target.value); setStateId(""); }}>
+          <option value="all">All states</option><option value="flat_reward">Flat rewards</option>
+          <option value="sft_pass_target">SFT pass targets</option><option value="panel">Reliability panel</option>
+        </select></label>
+        <label className="audit-control">State <select value={state?.id ?? ""} onChange={(e) => setStateId(e.target.value)}>
+          {options.map((s) => <option value={s.id} key={s.id}>{s.id} · {s.split} · {s.state.phase}{s.flags.length ? ` · ${s.flags.map(titleCase).join(", ")}` : ""}</option>)}
+        </select></label>
+      </div>
+      {state ? <>
+        {unit && <div className="notice">Replay: {unit.replay_match === null ? "not available" : unit.replay_match ? "matched" : "mismatch"}. Repeat check: {unit.repeatable === null || unit.repeatable === undefined ? "incomplete" : unit.repeatable ? "passed" : "failed"}.
+          {unit.error && <details><summary>Failure details</summary><pre>{unit.error}</pre></details>}
+        </div>}
+        <div className="trajectory">
+          <div className="board-panel"><BoardView board={state.board} state={state.state} /></div>
+          <div className="decision"><span className="eyebrow">{state.split} · source game {state.game_seed}</span>
+            <h3>Turn {state.state.turn} · {state.state.current_color.toLowerCase()}</h3>
+            <p>{state.actions.length} legal actions, {state.best.length} tied for the highest value.</p>
+            <p>SFT target: A{state.sft_target} ({titleCase(state.actions[state.sft_target].type)}). The original rule picks the smallest tied ID.</p>
+            {Object.entries(state.predictions).map(([arm, p]) => <p key={arm}>{arm}: <code>{JSON.stringify(p.output)}</code> · {p.valid ? "valid" : "invalid"} · {p.agreement ? "agrees" : "disagrees"}</p>)}
+            <p className="footnote">Replay matching checks the saved prompt and menu. Full hidden states were not stored. No action was executed here. Values are teacher estimates in [0, 1]; training reward is 2 × value - 1.</p>
+          </div>
+        </div>
+        <div className="table-wrap"><table><thead><tr><th>ID</th><th>Legal action</th><th>Original value / visits</th>
+          {(unit?.repeats ?? []).map((r) => <th key={r.seed}>Repeat {r.seed}<br />value / visits</th>)}
+        </tr></thead><tbody>{state.actions.map((a, i) => <tr key={i}>
+          <td>A{i}{state.best.includes(i) ? " *" : ""}</td><td>{titleCase(a.type)} <code>{JSON.stringify(a.value)}</code></td>
+          <td>{num(state.values[i], 3)} / {state.visits[i]}</td>
+          {(unit?.repeats ?? []).map((r) => <td key={r.seed}>{num(r.values[i], 3)} / {r.visits[i]}{r.best.includes(i) ? " *" : ""}</td>)}
+        </tr>)}</tbody></table></div>
+        <p className="footnote">* Highest value in that search. Flat or unstable rewards fail the repeatability criterion.</p>
+      </> : <div className="empty-chart">No states in this filter.</div>}
+    </section>
+  </>;
 }
 
 function App() {
@@ -595,6 +722,7 @@ function App() {
                 {run.config.smoke === true && (
                   <div className="notice">Engineering smoke test. Small budgets and shortened games; excluded from playing-strength claims.</div>
                 )}
+                {tab === "overview" && run.algorithm === "reward_audit" && <RewardAudit run={run} />}
                 {tab === "overview" && llmTraining && (
                   <>
                     <div className="stats">
@@ -706,7 +834,7 @@ function App() {
                     </section>
                   </>
                 )}
-                {tab === "overview" && !preflight && !llmTraining && (
+                {tab === "overview" && !preflight && !llmTraining && run.algorithm !== "reward_audit" && (
                   <>
                     <div className="stats">
                       <Stat

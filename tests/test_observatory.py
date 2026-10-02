@@ -116,6 +116,27 @@ def test_api_rejects_symlink_escape(tmp_path):
     assert client.get("/api/runs/0-escaped").status_code == 404
 
 
+def test_audit_api_distinguishes_missing_partial_and_tampered_evidence(tmp_path):
+    import hashlib
+    root = tmp_path / "runs"
+    writer = RunWriter(root / "audit", "reward_audit", {})
+    client = TestClient(create_app([root], tmp_path / "review.sqlite", tmp_path / "no-dist"))
+    url = "/api/runs/0-audit/audit"
+    assert client.get(url).status_code == 404
+    path = writer.directory / "audit.json"
+    path.write_text(json.dumps({"gate": {"status": "incomplete", "recommend_training": False}}))
+    assert client.get(url).json()["gate"]["recommend_training"] is False
+    writer.finish(audit_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    assert client.get(url).status_code == 200
+    path.write_text(json.dumps({"gate": {"status": "pass", "recommend_training": True}}))
+    assert client.get(url).status_code == 409
+    path.unlink()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{}')
+    path.symlink_to(outside)
+    assert client.get(url).status_code == 404
+
+
 def test_existing_run_cannot_be_overwritten(tmp_path):
     RunWriter(tmp_path / "a", "test", {})
     with pytest.raises(FileExistsError):

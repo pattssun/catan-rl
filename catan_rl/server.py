@@ -1,6 +1,7 @@
 """Local run browser. Training runs independently of the HTTP service."""
 
 import argparse
+import hashlib
 import json
 import re
 import sqlite3
@@ -95,6 +96,24 @@ class Store:
                 (key, episode))]
         return result
 
+    def audit(self, key):
+        directory = self.directory(key)
+        path = directory / "audit.json"
+        if not path.is_file() or not path.resolve().is_relative_to(directory.resolve()):
+            raise HTTPException(404, "Reward audit not available")
+        raw = path.read_bytes()
+        manifest = json.loads((directory / "manifest.json").read_text())
+        expected = manifest.get("audit_sha256")
+        if expected and hashlib.sha256(raw).hexdigest() != expected:
+            raise HTTPException(409, "Reward audit hash does not match its run manifest")
+        try:
+            report = json.loads(raw)
+            if not isinstance(report, dict) or "gate" not in report:
+                raise ValueError("Missing gate")
+        except ValueError:
+            raise HTTPException(409, "Reward audit is unreadable")
+        return report
+
 
 def create_app(roots=None, database="runs/reviews.sqlite3", dist="dashboard/dist"):
     store = Store(roots or ["runs", "examples/runs"], database)
@@ -128,6 +147,10 @@ def create_app(roots=None, database="runs/reviews.sqlite3", dist="dashboard/dist
     @app.get("/api/runs/{run}/episodes/{episode}")
     def episode_detail(run: str, episode: str):
         return store.episode(run, episode)
+
+    @app.get("/api/runs/{run}/audit")
+    def audit_detail(run: str):
+        return store.audit(run)
 
     @app.post("/api/runs/{run}/episodes/{episode}/reviews")
     def review(run: str, episode: str, value: Review):
